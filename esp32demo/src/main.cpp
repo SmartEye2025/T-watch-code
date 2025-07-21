@@ -1,4 +1,5 @@
 #define LILYGO_WATCH_2020_V1
+// #define INTENSITY 20
 #include <LilyGoWatch.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -6,9 +7,9 @@
 // 配置项
 const char *ssid = "SCUNOT";
 const char *password = "1346286832LYS";
-const char *mqttServer = "broker.emqx.io";
+const char *mqttServer = "43.138.252.29";
 const int mqttPort = 1883;
-const char *topic = "classroom/seat/alert";
+const char *topic = "remind/1/vibrate";
 
 // 震动电机设置
 const int VIBRATOR_PIN = 4;
@@ -19,9 +20,11 @@ bool isVibrating = false;
 bool shouldStopVibration = false;
 
 // 关机按键设置
-const int POWER_BUTTON_PIN = 35;      // AXP202_INT 引脚
+const int POWER_BUTTON_PIN = 35;          // AXP202_INT 引脚
 const long POWER_BUTTON_HOLD_TIME = 1500; // 长按1.5秒关机
-
+// int intensity = INTENSITY;
+int intensity = 0;
+int time_count = 1;
 // 关机状态变量
 bool isShuttingDown = false;
 unsigned long powerButtonPressStart = 0;
@@ -32,51 +35,89 @@ PubSubClient client(espClient);
 TTGOClass *ttgo;
 TFT_eSPI *tft;
 
-// 震动模式函数（优化版）
+// 震动模式函数
 void vibratePattern1()
 {
-    // 短震（50%强度）
-    ledcWrite(PWM_CHANNEL, 128);
+
+    ledcWrite(PWM_CHANNEL, 100);
     delay(500);
     ledcWrite(PWM_CHANNEL, 0);
-    delay(300);
+    delay(500);
 
-    // 长震（100%强度）
-    ledcWrite(PWM_CHANNEL, 205);
-    delay(600);
+    ledcWrite(PWM_CHANNEL, 100);
+    delay(500);
     ledcWrite(PWM_CHANNEL, 0);
+    delay(500);
+
+    ledcWrite(PWM_CHANNEL, 100);
+    delay(500);
+    ledcWrite(PWM_CHANNEL, 0);
+    delay(500);
+
+    ledcWrite(PWM_CHANNEL, 100);
+    delay(500);
+    ledcWrite(PWM_CHANNEL, 0);
+    delay(500);
 }
 
 void vibratePattern2()
 {
-    // 短震（50%强度）
-    int intensity = 50; // 起始强度为50
     unsigned long startTime = millis();
     unsigned long lastIncreaseTime = startTime;
     unsigned long lastMQTTCheck = startTime;
-    // 确保屏幕一直亮着
+
     // 设置震动状态
     isVibrating = true;
     shouldStopVibration = false;
 
     // 确保屏幕一直亮着
     ttgo->openBL();
+    tft->fillScreen(TFT_BLACK);
+    tft->setTextColor(TFT_RED, TFT_BLACK);
+    tft->setTextSize(5);
+    tft->setCursor(75, 100);
+    tft->print("!!!!!!!");
+    tft->setTextSize(2);
+    // tft->setCursor(60, 150);
+    // tft->print("Level: ");
+    // tft->print(intensity);
 
     // 无限循环，持续震动
     while (!shouldStopVibration)
     {
-        // 每10秒增加震动强度，最高到255
-        if (millis() - lastIncreaseTime >= 10000)
-        { // 10秒
-            intensity = (intensity >= 230) ? 255 : intensity + 25;
+        // 当前震动强度根据intensity级别确定
+        int currentIntensity = 20;
+        if (intensity == 1)
+        {
+            currentIntensity = 20;
+        }
+        else if (intensity == 2)
+        {
+            currentIntensity = 100;
+        }
+        else if (intensity >= 3)
+        {
+            currentIntensity = 200;
+        }
 
+        // 执行震动 - 每个循环都会震动
+        ledcWrite(PWM_CHANNEL, currentIntensity);
+        delay(time_count * 400);
+        ledcWrite(PWM_CHANNEL, 0);
+        delay((8000 - (time_count * 4)) / 3); // 4个震动,3个暂停
+
+        // 每10秒增加震动强度和时长
+        if (millis() - lastIncreaseTime >= 10000)
+        {
+            intensity++;
+            time_count = (time_count >= 3) ? 3 : time_count + 1;
             lastIncreaseTime = millis();
 
             // 刷新显示
             tft->fillScreen(TFT_BLACK);
             tft->setTextColor(TFT_RED, TFT_BLACK);
             tft->setTextSize(5);
-            tft->setCursor(60, 100);
+            tft->setCursor(75, 100);
             tft->print("!!!!!!!");
 
             // 显示当前强度
@@ -85,19 +126,6 @@ void vibratePattern2()
             // tft->print("Level: ");
             // tft->print(intensity);
         }
-
-        // 震动模式：短震 - 暂停 - 长震 - 暂停
-        // 短震
-        ledcWrite(PWM_CHANNEL, intensity);
-        delay(300);
-        ledcWrite(PWM_CHANNEL, 0);
-        delay(200);
-
-        // 长震
-        ledcWrite(PWM_CHANNEL, intensity);
-        delay(600);
-        ledcWrite(PWM_CHANNEL, 0);
-        delay(300);
 
         if (millis() - lastMQTTCheck >= 1000)
         {
@@ -117,21 +145,24 @@ void stopVibration()
 {
     shouldStopVibration = true;
     isVibrating = false;
+    intensity = 0;
+    time_count = 1;
     ledcWrite(PWM_CHANNEL, 0);
     ttgo->closeBL();
 }
 
 // 关机函数
-void shutdownDevice() {
+void shutdownDevice()
+{
     Serial.println("Shutting down...");
-    
+
     // 关闭震动
     ledcWrite(PWM_CHANNEL, 0);
-    
+
     // 断开网络连接
     client.disconnect();
     WiFi.disconnect();
-    
+
     // 显示关机画面
     ttgo->openBL();
     ttgo->tft->fillScreen(TFT_BLACK);
@@ -140,19 +171,20 @@ void shutdownDevice() {
     ttgo->tft->setCursor(50, 110);
     ttgo->tft->print("Power Off");
     delay(1000);
-    
+
     // 关闭背光
     ttgo->closeBL();
-    
+
     // 关闭外设电源
     ttgo->power->setPowerOutPut(AXP202_LDO2, AXP202_OFF); // 震动电机
     ttgo->power->setPowerOutPut(AXP202_LDO3, AXP202_OFF); // 显示屏
-    
+
     // 深度睡眠或关机
     ttgo->power->shutdown();
-    
+
     // 如果关机失败，进入死循环
-    while (1) {
+    while (1)
+    {
         delay(1000);
     }
 }
@@ -164,7 +196,8 @@ void callback(char *topic, byte *payload, unsigned int length)
     for (int i = 0; i < length; i++)
         message += (char)payload[i];
 
-    if (message.indexOf("leave1") != -1)
+    if (message.indexOf("type1") != -1)
+
     { // 监控检测到的,循环震动直到接收到停止消息
         // 打开屏幕背光
         ttgo->openBL();
@@ -173,13 +206,13 @@ void callback(char *topic, byte *payload, unsigned int length)
         tft->fillScreen(TFT_BLACK);
         tft->setTextColor(TFT_RED, TFT_BLACK);
         tft->setTextSize(5);
-        tft->setCursor(60, 100); // 更居中的位置
+        tft->setCursor(75, 100); // 居中的位置
         tft->print("!!!!!!!");   // 7个感叹号
 
         // 触发震动提醒
         vibratePattern2();
     }
-    else if (message.indexOf("leave2") != -1)
+    else if (message.indexOf("type2") != -1)
     { // 教师的提醒,短暂震动
         // 打开屏幕背光
         ttgo->openBL();
@@ -188,7 +221,7 @@ void callback(char *topic, byte *payload, unsigned int length)
         tft->fillScreen(TFT_BLACK);
         tft->setTextColor(TFT_RED, TFT_BLACK);
         tft->setTextSize(5);
-        tft->setCursor(60, 100); // 更居中的位置
+        tft->setCursor(75, 100); // 更居中的位置
         tft->print("!!!!!!!");   // 7个感叹号
 
         // 触发震动提醒
@@ -200,7 +233,7 @@ void callback(char *topic, byte *payload, unsigned int length)
         // 关闭屏幕背光
         ttgo->closeBL();
     }
-    else if (message.indexOf("back") != -1)
+    else if (message.indexOf("type3") != -1)
     {
         stopVibration();
     }
@@ -232,6 +265,7 @@ void setup()
     tft->setTextColor(TFT_WHITE, TFT_BLACK);
     tft->setCursor(0, 50);
     tft->print("connecting wifi...");
+    delay(1000);
 
     // WiFi连接
     WiFi.begin(ssid, password);
@@ -267,13 +301,11 @@ void setup()
     tft->print("ready to receive alerts...");
 
     // 2秒后关闭背光
-    delay(2000);
+    delay(3000);
     ttgo->closeBL();
 
     // 配置电源按键中断引脚
     pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
-
-    Serial.println("Setup completed. Ready for alerts.");
 }
 
 void loop()
@@ -290,29 +322,37 @@ void loop()
     static bool previousButtonState = HIGH;
     static unsigned long lastDebounceTime = 0;
     const unsigned long debounceDelay = 50; // 防抖延迟
-    
+
     // 读取当前按钮状态
     bool currentReading = digitalRead(POWER_BUTTON_PIN);
-    
+
     // 如果状态变化，重置防抖计时器
-    if (currentReading != previousButtonState) {
+    if (currentReading != previousButtonState)
+    {
         lastDebounceTime = millis();
     }
     previousButtonState = currentReading;
-    
+
     // 如果状态稳定超过防抖时间
-    if ((millis() - lastDebounceTime) > debounceDelay) {
+    if ((millis() - lastDebounceTime) > debounceDelay)
+    {
         // 如果按钮被按下（低电平）
-        if (currentReading == LOW) {
-            if (powerButtonPressStart == 0) {
+        if (currentReading == LOW)
+        {
+            if (powerButtonPressStart == 0)
+            {
                 powerButtonPressStart = millis(); // 记录按下开始时间
                 Serial.println("Power button pressed");
-            } else if (!isShuttingDown && millis() - powerButtonPressStart >= POWER_BUTTON_HOLD_TIME) {
+            }
+            else if (!isShuttingDown && millis() - powerButtonPressStart >= POWER_BUTTON_HOLD_TIME)
+            {
                 isShuttingDown = true;
                 Serial.println("Shutdown triggered");
                 shutdownDevice(); // 执行关机
             }
-        } else {
+        }
+        else
+        {
             powerButtonPressStart = 0; // 按钮释放
         }
     }
